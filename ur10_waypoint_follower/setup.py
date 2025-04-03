@@ -12,6 +12,18 @@ setup(
          [os.path.join('launch', 'waypoint.launch.py')]),
         (os.path.join('share', package_name, 'resource'),
          [os.path.join('resource', 'waypoints.csv')]),
+        # Include URDF files from the urdf subdirectory
+        (os.path.join('share', package_name, 'urdf'),
+         [
+             os.path.join('urdf', 'ur.urdf.xacro'),
+             os.path.join('urdf', 'welding_tool.urdf.xacro'),
+         ]),
+        # Include YAML configuration files from the config subdirectory
+        (os.path.join('share', package_name, 'config'),
+         [
+             os.path.join('config', 'physical_parameters.yaml'),
+             os.path.join('config', 'visual_parameters.yaml'),
+         ]),
         (os.path.join('share', package_name), ['package.xml'])
     ],
     install_requires=['setuptools'],
