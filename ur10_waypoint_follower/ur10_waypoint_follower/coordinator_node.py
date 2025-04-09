@@ -11,11 +11,24 @@ from shape_msgs.msg import SolidPrimitive
 class WaypointCoordinator(Node):
     def __init__(self):
         super().__init__('waypoint_coordinator')
+        self.get_logger().info("WaypointCoordinator node initialized.")        
+
+        ''' Remove CSV parameters to subscribe to dummy topic
         # initialize csv_path and offset parameters, can change parameters in launch file
         self.declare_parameter('csv_path', '')
         self.declare_parameter('offset', 0.00)
         self.csv_path = self.get_parameter('csv_path').value
         self.offset = self.get_parameter('offset').value
+        '''
+        self.offset = 0.05 # default offset if needed
+
+        # Subscribe to the dummy pose topic
+        self.subscription = self.create_subscription(
+            PoseStamped,
+            '/dummy_target_pose',
+            self.target_pose_callback,
+            10)
+        self.target_pose = None # Store the received target pose
 
         # look up current end effector pose
         self.tf_buffer = tf2_ros.Buffer()
@@ -28,13 +41,18 @@ class WaypointCoordinator(Node):
 
         # ensure sequential execution and wait 3 seconds
         self.is_executing = False
+        ''' Not using a timer for cycle in this case
         self.create_timer(3.0, self.run_cycle) # wait 3 sec
+        '''
 
         # scene publisher and ground plane setup
         self.scene_publisher = self.create_publisher(PlanningScene, '/planning_scene', 10)
+        self.get_logger().info("Scene publisher created.")
         self.add_ground_plane() # ground plane to avoid robot planning through the floor
+        self.get_logger().info("add_ground_plane() called.")
 
     def add_ground_plane(self):
+        self.get_logger().info("Inside add_ground_plane().")
         ground = CollisionObject()
         ground.id = "ground"
         ground.header.frame_id = "base_link"
@@ -56,9 +74,62 @@ class WaypointCoordinator(Node):
         scene.world.collision_objects.append(ground)
         scene.is_diff = True
         self.scene_publisher.publish(scene)
-        self.get_logger().info("Added enhanced ground collision plane")
+        self.get_logger().info("Published ground collision plane.")
+
+    def target_pose_callback(self, msg):
+        self.get_logger().info(f"Received target pose: {msg.pose.position}\n")
+        self.target_pose = msg.pose
+        if not self.is_executing and self.target_pose is not None:
+            self.move_to_target_pose(self.target_pose)
+
+    def move_to_target_pose(self, target_pose):
+        self.is_executing = True
+        #-------------------------------------------------------------
+        # --- get current pose ---
+        #-------------------------------------------------------------
+        
+        try:
+            if not self.tf_buffer.can_transform('base_link', 'wrist_3_link', rclpy.time.Time()):
+                self.get_logger().warn("TF frames not available!")
+                self.is_executing = False
+                return
+
+            trans = self.tf_buffer.lookup_transform('base_link', 'wrist_3_link', rclpy.time.Time())
+        except Exception as e:
+            self.get_logger().warn(f"TF lookup failed: {str(e)}")
+            self.is_executing = False
+            return
+
+        current_pose = Pose()
+        current_pose.position.x = trans.transform.translation.x
+        current_pose.position.y = trans.transform.translation.y
+        current_pose.position.z = trans.transform.translation.z
+        current_pose.orientation = trans.transform.rotation
+
+        #-------------------------------------------------------------
+        # --- safety check with offset ---
+        #-------------------------------------------------------------
+
+        offset_pose = Pose()
+        offset_pose.position.x = target_pose.position.x + self.offset
+        offset_pose.position.y = target_pose.position.y
+        offset_pose.position.z = target_pose.position.z
+        offset_pose.orientation = target_pose.orientation
+
+        SAFE_Z_MIN = 0.35
+        SAFE_Z_MAX = 1.5
+        if not (SAFE_Z_MIN <= offset_pose.position.z <= SAFE_Z_MAX):
+            self.get_logger().warn(f"Target pose Z ({offset_pose.position.z:.2f}m) out of safe bounds!\n")
+            self.is_executing = False
+            return
+
+        self.get_logger().info("Target pose validated, sending goal to robot.\n")
+        self.send_goal(offset_pose) # Send the offset pose
+
 
     def run_cycle(self):
+        pass
+        ''' Not needed as we react to incoming target poses
         # if previous cycle is executing then do nothing
         if self.is_executing:
             return
@@ -175,7 +246,8 @@ class WaypointCoordinator(Node):
 
         self.get_logger().info("Validated parsed pose, sending goal to robot.")
         self.send_goal(parsed_pose)
-
+        '''
+        
     def send_goal(self, pose):
         # verify action server is available
         if not self._action_client.wait_for_server(timeout_sec=5.0):
@@ -253,9 +325,9 @@ class WaypointCoordinator(Node):
     def get_result_callback(self, future):
         result = future.result().result
         if result.error_code.val == result.error_code.SUCCESS:
-            self.get_logger().info('Motion completed successfully!')
+            self.get_logger().info('Motion completed successfully!\n')
         else:
-            self.get_logger().error(f'Motion failed with error code: {result.error_code.val}')
+            self.get_logger().error(f'Motion failed with error code: {result.error_code.val}\n')
         self.is_executing = False
 
 def main(args=None):
