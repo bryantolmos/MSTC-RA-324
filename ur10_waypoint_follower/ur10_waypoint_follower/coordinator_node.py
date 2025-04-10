@@ -1,345 +1,186 @@
-import rclpy
-import csv
-from rclpy.node import Node
-from rclpy.action import ActionClient
-import tf2_ros
-from geometry_msgs.msg import Pose, PoseStamped
+from geometry_msgs.msg import PoseStamped, Pose
+from moveit_msgs.srv import GetCartesianPath
 from moveit_msgs.action import MoveGroup
-from moveit_msgs.msg import MotionPlanRequest, Constraints, PositionConstraint, OrientationConstraint, CollisionObject, PlanningScene
-from shape_msgs.msg import SolidPrimitive
+from action_msgs.msg import GoalStatus
+from control_msgs.action import FollowJointTrajectory
+from rclpy.action import ActionClient
+import rclpy
+from rclpy.node import Node
+import rclpy.duration
+from builtin_interfaces.msg import Duration  # Import Duration from builtin_interfaces
+import time
+import math  # Import the math library
 
 class WaypointCoordinator(Node):
     def __init__(self):
         super().__init__('waypoint_coordinator')
-        self.get_logger().info("WaypointCoordinator node initialized.")        
-
-        ''' Remove CSV parameters to subscribe to dummy topic
-        # initialize csv_path and offset parameters, can change parameters in launch file
-        self.declare_parameter('csv_path', '')
-        self.declare_parameter('offset', 0.00)
-        self.csv_path = self.get_parameter('csv_path').value
-        self.offset = self.get_parameter('offset').value
-        '''
-        self.offset = 0.05 # default offset if needed
-
-        # Subscribe to the dummy pose topic
-        self.subscription = self.create_subscription(
-            PoseStamped,
-            '/dummy_target_pose',
-            self.target_pose_callback,
-            10)
-        self.target_pose = None # Store the received target pose
-
-        # look up current end effector pose
-        self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
-
-        # action client for moveGroup
-        self._action_client = ActionClient(self, MoveGroup, '/move_action')
-        self._send_goal_future = None
+        self.cartesian_path_client = self.create_client(GetCartesianPath, '/compute_cartesian_path')
+        while not self.cartesian_path_client.wait_for_service(timeout_sec=5.0): # Increase timeout
+            self.get_logger().info('Waiting for /compute_cartesian_path service...')
+        self.move_group_name = "ur_manipulator"  # Adjust if your move group name is different
+        self.planning_frame = "base_link"        # Adjust if your planning frame is different
+        self.eef_link = "tool0"                  # Adjust if your end-effector link is different
+        # Correct the action server name here:
+        self.trajectory_action_client = ActionClient(self, FollowJointTrajectory, '/joint_trajectory_controller/follow_joint_trajectory')
+        self._goal_future = None
         self._get_result_future = None
+        self.action_server_available = False # Add this line
 
-        # ensure sequential execution and wait 3 seconds
-        self.is_executing = False
-        ''' Not using a timer for cycle in this case
-        self.create_timer(3.0, self.run_cycle) # wait 3 sec
-        '''
+    def create_waypoint(self, x, y, z, qx=0.0, qy=0.0, qz=0.0, qw=1.0):
+        pose = Pose()
+        pose.position.x = x
+        pose.position.y = y
+        pose.position.z = z
+        pose.orientation.x = qx
+        pose.orientation.y = qy
+        pose.orientation.z = qz
+        pose.orientation.w = qw
+        return pose
 
-        # scene publisher and ground plane setup
-        self.scene_publisher = self.create_publisher(PlanningScene, '/planning_scene', 10)
-        self.get_logger().info("Scene publisher created.")
-        self.add_ground_plane() # ground plane to avoid robot planning through the floor
-        self.get_logger().info("add_ground_plane() called.")
+    def quaternion_from_euler(self, roll, pitch, yaw):
+        """
+        Converts Euler angles (roll, pitch, yaw) to a quaternion.
+        This function assumes the commonly used Tait-Bryan convention
+        where the rotations are applied in the order: yaw (Z), pitch (Y), roll (X).
+        Args:
+            roll (float): Rotation around the X-axis (in radians).
+            pitch (float): Rotation around the Y-axis (in radians).
+            yaw (float): Rotation around the Z-axis (in radians).
 
-    def add_ground_plane(self):
-        self.get_logger().info("Inside add_ground_plane().")
-        ground = CollisionObject()
-        ground.id = "ground"
-        ground.header.frame_id = "base_link"
-        ground.operation = CollisionObject.ADD
+        Returns:
+            tuple: A tuple (qx, qy, qz, qw) representing the quaternion.
+        """
+        cy = math.cos(yaw * 0.5)
+        sy = math.sin(yaw * 0.5)
+        cp = math.cos(pitch * 0.5)
+        sp = math.sin(pitch * 0.5)
+        cr = math.cos(roll * 0.5)
+        sr = math.sin(roll * 0.5)
 
-        # create floor box
-        box = SolidPrimitive()
-        box.type = SolidPrimitive.BOX
-        box.dimensions = [4.0, 4.0, 0.02]
+        qw = cr * cp * cy + sr * sp * sy
+        qx = sr * cp * cy - cr * sp * sy
+        qy = cr * sp * cy + sr * cp * sy
+        qz = cr * cp * sy - sr * sp * cy
 
-        ground_pose = PoseStamped()
-        ground_pose.header.frame_id = "base_link"
-        ground_pose.pose.position.z = -0.03
+        return qx, qy, qz, qw
 
-        ground.primitives.append(box)
-        ground.primitive_poses.append(ground_pose.pose)
+    def send_cartesian_waypoints(self):
+        self.get_logger().info("Sending Cartesian waypoints...")
+        request = GetCartesianPath.Request()
+        request.header.frame_id = self.planning_frame
+        request.group_name = self.move_group_name
+        request.avoid_collisions = True
+        request.max_step = 0.02
+        waypoints = []
 
-        scene = PlanningScene()
-        scene.world.collision_objects.append(ground)
-        scene.is_diff = True
-        self.scene_publisher.publish(scene)
-        self.get_logger().info("Published ground collision plane.")
+        # 1. Start Pose (Tool facing down)
+        start_pose = self.create_waypoint(0.6, 0.0, 0.5, qx=0.0, qy=0.0, qz=0.0, qw=1.0)
+        waypoints.append(start_pose)
 
-    def target_pose_callback(self, msg):
-        self.get_logger().info(f"Received target pose: {msg.pose.position}\n")
-        self.target_pose = msg.pose
-        if not self.is_executing and self.target_pose is not None:
-            self.move_to_target_pose(self.target_pose)
+        # 2. Move Down
+        down_pose = self.create_waypoint(0.6, 0.0, 0.3, qx=0.0, qy=0.0, qz=0.0, qw=1.0)
+        waypoints.append(down_pose)
 
-    def move_to_target_pose(self, target_pose):
-        self.is_executing = True
-        #-------------------------------------------------------------
-        # --- get current pose ---
-        #-------------------------------------------------------------
-        
+        # 3. Rotate End-Effector Forward
+        roll_forward = 0.0
+        pitch_forward = math.pi / 2  # 90 degrees around Y
+        yaw_forward = 0.0
+        qx_forward, qy_forward, qz_forward, qw_forward = self.quaternion_from_euler(roll_forward, pitch_forward, yaw_forward)
+        forward_pose_1 = self.create_waypoint(0.6, 0.0, 0.3, qx=qx_forward, qy=qy_forward, qz=qz_forward, qw=qw_forward)
+        waypoints.append(forward_pose_1)
+
+        # 4. Move Right
+        right_pose = self.create_waypoint(0.6, 0.8, 0.3, qx=qx_forward, qy=qy_forward, qz=qz_forward, qw=qw_forward)
+        waypoints.append(right_pose)
+
+        # 5. Move Back 
+        original_pose_2 = self.create_waypoint(0.4, 0.8, 0.3, qx=qx_forward, qy=qy_forward, qz=qz_forward, qw=qw_forward)
+        waypoints.append(original_pose_2)
+
+        # 6. Rotate End-Effector Back to Original
+        roll_original = 0.0
+        pitch_original = 0.0
+        yaw_original = 0.0
+        qx_original, qy_original, qz_original, qw_original = self.quaternion_from_euler(roll_original, pitch_original, yaw_original)
+        original_pose_1 = self.create_waypoint(0.4, 0.8, 0.3, qx=qx_original, qy=qy_original, qz=qz_original, qw=qw_original)
+        waypoints.append(original_pose_1)
+
+        # 7. Move Back to Original Position
+        original_pose_2 = self.create_waypoint(0.6, 0.0, 0.5, qx=qx_original, qy=qy_original, qz=qz_original, qw=qw_original)
+        waypoints.append(original_pose_2)
+
+        request.waypoints = waypoints
+        self.future = self.cartesian_path_client.call_async(request)
+        self.future.add_done_callback(self.handle_cartesian_path_response)
+
+    def handle_cartesian_path_response(self, future):
         try:
-            if not self.tf_buffer.can_transform('base_link', 'wrist_3_link', rclpy.time.Time()):
-                self.get_logger().warn("TF frames not available!")
-                self.is_executing = False
-                return
-
-            trans = self.tf_buffer.lookup_transform('base_link', 'wrist_3_link', rclpy.time.Time())
+            response = future.result()
+            if response.fraction >= 0.99:
+                trajectory = response.solution.joint_trajectory
+                self.get_logger().info("Cartesian path planned successfully. Now executing...")
+                self.execute_trajectory(trajectory)
+            else:
+                self.get_logger().warn(f"Cartesian path planning failed. Fraction: {response.fraction}")
         except Exception as e:
-            self.get_logger().warn(f"TF lookup failed: {str(e)}")
-            self.is_executing = False
+            self.get_logger().error(f"Service call failed {e}")
+
+    def execute_trajectory(self, trajectory):
+        self.get_logger().info("Executing trajectory...")
+        goal_msg = FollowJointTrajectory.Goal()
+        goal_msg.trajectory = trajectory
+        # Create a Duration object, ensuring it's from builtin_interfaces
+        goal_msg.goal_time_tolerance = Duration(sec=2, nanosec=0) # Increased tolerance
+
+        if not self.action_server_available: # Check if the action server is available
+            self.get_logger().error("Action server is not available!")
             return
 
-        current_pose = Pose()
-        current_pose.position.x = trans.transform.translation.x
-        current_pose.position.y = trans.transform.translation.y
-        current_pose.position.z = trans.transform.translation.z
-        current_pose.orientation = trans.transform.rotation
+        self._goal_future = self.trajectory_action_client.send_goal_async(
+            goal_msg,
+            feedback_callback=self._feedback_callback)
+        self.get_logger().info(f"Goal sent: {goal_msg}")
+        self._goal_future.add_done_callback(self._goal_response_callback)
 
-        #-------------------------------------------------------------
-        # --- safety check with offset ---
-        #-------------------------------------------------------------
-
-        offset_pose = Pose()
-        offset_pose.position.x = target_pose.position.x + self.offset
-        offset_pose.position.y = target_pose.position.y
-        offset_pose.position.z = target_pose.position.z
-        offset_pose.orientation = target_pose.orientation
-
-        SAFE_Z_MIN = 0.35
-        SAFE_Z_MAX = 1.5
-        if not (SAFE_Z_MIN <= offset_pose.position.z <= SAFE_Z_MAX):
-            self.get_logger().warn(f"Target pose Z ({offset_pose.position.z:.2f}m) out of safe bounds!\n")
-            self.is_executing = False
-            return
-
-        self.get_logger().info("Target pose validated, sending goal to robot.\n")
-        self.send_goal(offset_pose) # Send the offset pose
-
-
-    def run_cycle(self):
-        pass
-        ''' Not needed as we react to incoming target poses
-        # if previous cycle is executing then do nothing
-        if self.is_executing:
-            return
-        self.is_executing = True
-
-        #-------------------------------------------------------------
-        # --- get current pose ---
-        #-------------------------------------------------------------
-        
-        try:
-            # verify TF frame exists
-            if not self.tf_buffer.can_transform('base_link', 'wrist_3_link', rclpy.time.Time()):
-                self.get_logger().warn("TF frames not available!")
-                self.is_executing = False
-                return
-            
-            trans = self.tf_buffer.lookup_transform('base_link', 'wrist_3_link', rclpy.time.Time())
-        except Exception as e:
-            self.get_logger().warn(f"TF lookup failed: {str(e)}")
-            self.is_executing = False
-            return
-
-        current_pose = Pose()
-        current_pose.position.x = trans.transform.translation.x
-        current_pose.position.y = trans.transform.translation.y
-        current_pose.position.z = trans.transform.translation.z
-        current_pose.orientation = trans.transform.rotation
-
-        #-------------------------------------------------------------
-        # --- compute offset pose ---
-        #-------------------------------------------------------------
-
-        #TO DO : add offset to be random rather than just +5 cm, maybe
-        # to something where we could + and - random numbers within a range
-        # to ensure the offset remains in the offset boundaries at all times
-        # therefore preventing the robot to break
-        offset_pose = Pose()
-        offset_pose.position.x = current_pose.position.x + self.offset
-        offset_pose.position.y = current_pose.position.y
-        offset_pose.position.z = current_pose.position.z  
-        offset_pose.orientation = current_pose.orientation
-
-        # workspace boundaries check with safety margin
-        SAFE_Z_MIN = 0.35  # 0.35cm safety margin
-        SAFE_Z_MAX = 1.5  # 1.5m safety amrgin
-        if not (SAFE_Z_MIN <= offset_pose.position.z <= SAFE_Z_MAX):
-            self.get_logger().warn(f"Offset pose Z ({offset_pose.position.z:.2f}m) out of safe bounds!")
-            self.is_executing = False
-            return
-
-        #-------------------------------------------------------------
-        # --- write current and offset poses to csv ---
-        #-------------------------------------------------------------
-
-        try:
-            with open(self.csv_path, 'w', newline='') as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(['x','y','z','ox','oy','oz','ow'])
-                # write current pose
-                writer.writerow([
-                    current_pose.position.x,
-                    current_pose.position.y,
-                    current_pose.position.z,
-                    current_pose.orientation.x,
-                    current_pose.orientation.y,
-                    current_pose.orientation.z,
-                    current_pose.orientation.w
-                ])
-                # write offset pose
-                writer.writerow([
-                    offset_pose.position.x,
-                    offset_pose.position.y,
-                    offset_pose.position.z,
-                    offset_pose.orientation.x,
-                    offset_pose.orientation.y,
-                    offset_pose.orientation.z,
-                    offset_pose.orientation.w
-                ])
-        except Exception as e:
-            self.get_logger().error(f"CSV write error: {str(e)}")
-            self.is_executing = False
-            return
-        self.get_logger().info(f"Wrote poses to CSV at {self.csv_path}")
-
-        #-------------------------------------------------------------
-        # --- parse csv to get offset pose ---
-        #-------------------------------------------------------------
-
-        parsed_pose = Pose()
-        try:
-            with open(self.csv_path, 'r') as csvfile:
-                lines = list(csv.reader(csvfile))
-                if len(lines) >= 3:
-                    row = lines[2]
-                    parsed_pose.position.x = float(row[0])
-                    parsed_pose.position.y = float(row[1])
-                    parsed_pose.position.z = float(row[2])
-                    parsed_pose.orientation.x = float(row[3])
-                    parsed_pose.orientation.y = float(row[4])
-                    parsed_pose.orientation.z = float(row[5])
-                    parsed_pose.orientation.w = float(row[6])
-                else:
-                    raise ValueError("Insufficient CSV rows")
-        except Exception as e:
-            self.get_logger().error(f"CSV parse error: {str(e)}")
-            self.is_executing = False
-            return
-
-        # final safety check before sending goal
-        if parsed_pose.position.z < SAFE_Z_MIN:
-            self.get_logger().error(f"DANGER! Parsed Z ({parsed_pose.position.z:.2f}m) below minimum safety threshold!")
-            self.is_executing = False
-            return
-
-        self.get_logger().info("Validated parsed pose, sending goal to robot.")
-        self.send_goal(parsed_pose)
-        '''
-        
-    def send_goal(self, pose):
-        # verify action server is available
-        if not self._action_client.wait_for_server(timeout_sec=5.0):
-            self.get_logger().error("Action server not available!")
-            self.is_executing = False
-            return
-
-        # configure motion plan request
-        goal_msg = MoveGroup.Goal()
-        request = MotionPlanRequest()
-        request.group_name = "ur_manipulator"
-        request.num_planning_attempts = 20
-        request.allowed_planning_time = 20.0
-        request.planner_id = "RRTConnect"
-        request.max_velocity_scaling_factor = 0.4
-        request.max_acceleration_scaling_factor = 0.2
-
-        # position constraint using box
-        pos_constraint = PositionConstraint()
-        pos_constraint.header.frame_id = "base_link"
-        pos_constraint.link_name = "wrist_3_link"
-        pos_constraint.weight = 1.0
-        
-        volume = SolidPrimitive()
-        volume.type = SolidPrimitive.BOX 
-        volume.dimensions = [0.02, 0.02, 0.02] 
-        
-        position_pose = Pose()
-        position_pose.position = pose.position
-        position_pose.orientation.w = 1.0  # maintain orientation consistency
-        
-        pos_constraint.constraint_region.primitives.append(volume)
-        pos_constraint.constraint_region.primitive_poses.append(position_pose)
-
-        # orientation constraint
-        orient_constraint = OrientationConstraint()
-        orient_constraint.header.frame_id = "base_link"
-        orient_constraint.link_name = "wrist_3_link"
-        orient_constraint.orientation = pose.orientation
-        orient_constraint.absolute_x_axis_tolerance = 0.05
-        orient_constraint.absolute_y_axis_tolerance = 0.05
-        orient_constraint.absolute_z_axis_tolerance = 0.05
-        orient_constraint.weight = 1.0
-
-        # combine constraints
-        constraints = Constraints()
-        constraints.position_constraints.append(pos_constraint)
-        constraints.orientation_constraints.append(orient_constraint)
-        request.goal_constraints.append(constraints)
-        goal_msg.request = request
-
-        try:
-            self._send_goal_future = self._action_client.send_goal_async(goal_msg)
-        except Exception as e:
-            self.get_logger().error(f"Goal send failed: {str(e)}")
-            self.is_executing = False
-            return
-
-        if self._send_goal_future is not None:
-            self._send_goal_future.add_done_callback(self.goal_response_callback)
-        else:
-            self.get_logger().error("Goal future is None!")
-            self.is_executing = False
-
-    def goal_response_callback(self, future):
+    def _goal_response_callback(self, future):
         goal_handle = future.result()
         if not goal_handle.accepted:
-            self.get_logger().error('Goal rejected by server')
-            self.is_executing = False
+            self.get_logger().error('Goal rejected :(')
             return
-
+        self.get_logger().info('Goal accepted :)')
         self._get_result_future = goal_handle.get_result_async()
-        self._get_result_future.add_done_callback(self.get_result_callback)
+        self._get_result_future.add_done_callback(self._get_result_callback)
 
-    def get_result_callback(self, future):
-        result = future.result().result
-        if result.error_code.val == result.error_code.SUCCESS:
-            self.get_logger().info('Motion completed successfully!\n')
-        else:
-            self.get_logger().error(f'Motion failed with error code: {result.error_code.val}\n')
-        self.is_executing = False
+    def _get_result_callback(self, future):
+        result = future.result()
+        self.get_logger().info(f'Result: {result}')
+        # rclpy.shutdown()
+    def _feedback_callback(self, feedback_msg):
+        # You can process feedback here if needed
+        pass
+
+    def check_action_server(self):
+        """Check if the action server is available."""
+        for i in range(5):
+            if self.trajectory_action_client.wait_for_server(timeout_sec=1.0):
+                self.action_server_available = True
+                self.get_logger().info("Action server is available.")
+                return
+            else:
+                self.get_logger().warn("Action server is not available. Retrying...")
+                time.sleep(1.0)
+        self.get_logger().error("Action server is not available after 5 tries.")
+        self.action_server_available = False
 
 def main(args=None):
     rclpy.init(args=args)
     node = WaypointCoordinator()
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
+    node.check_action_server()
+    if node.action_server_available:
+        node.send_cartesian_waypoints()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
