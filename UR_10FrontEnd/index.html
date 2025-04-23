@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>3D Point Cloud Viewer with Webcam</title>
+    <link rel="stylesheet" href="styles.css">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' https://unpkg.com; object-src 'self'">
+</head>
+<body>
+    <div id="container">
+        <!-- ROS Connection Controls -->
+        <div id="connectionControls">
+            <button id="connectButton">Connect</button>
+            <span id="connectionStatus">Not connected</span>
+        </div>
+
+        <!-- Webcam View -->
+        <div id="webcamContainer">
+            <div id="coordBox">X: 0, Y: 0, Z: 0</div>
+            <div id="webcamControls">
+                <button id="scanButton">Scan</button>
+                <button id="weldButton">Weld</button>
+                <button id="stopButton">Stop</button>
+            </div>
+            <video id="webcam" autoplay muted playsinline></video>
+        </div>
+
+        <!-- 3D Model Viewer -->
+        <div id="modelContainer">
+            <button id="selectButton">Select Points</button>
+            <button id="deleteLastButton" style="display: none;">Delete Last Point</button>
+            <button id="saveButton">Save Points</button>
+            <div id="controls">
+                <label for="pointSize">Point Size:</label>
+                <input type="range" id="pointSize" min="0.005" max="0.05" step="0.001" value="0.0275"><br>
+                <label for="pointColor">Point Color:</label>
+                <input type="color" id="pointColor" value="#3cff33"><br>
+                <label for="lineColor">Line Color:</label>
+                <input type="color" id="lineColor" value="#3cff33">
+            </div>
+            <div id="orbitalControls">
+                <button id="zoomIn">+</button>
+                <button id="zoomOut">-</button>
+            </div>
+            <canvas id="modelCanvas"></canvas>
+        </div>
+    </div>
+
+    <!-- Script Libraries -->
+    <script src="lib/three.min.js"></script>
+    <script src="lib/plyLoader.js"></script>
+    <script src="lib/orbitControls.js"></script>
+    <script src="https://unpkg.com/roslib/build/roslib.min.js"></script>
+
+    <script>
+        // --- ROS Setup ---
+        let ros = null;
+        const connectBtn = document.getElementById('connectButton');
+        const statusSpan = document.getElementById('connectionStatus');
+
+        connectBtn.addEventListener('click', () => {
+            if (ros) {
+                ros.close();
+                ros = null;
+                statusSpan.textContent = 'Disconnected';
+                connectBtn.textContent = 'Connect';
+                return;
+            }
+
+            ros = new ROSLIB.Ros();
+            statusSpan.textContent = 'Connecting...';
+
+            ros.on('connection', () => {
+                statusSpan.textContent = 'Connected';
+                new Notification('ROS2 Connection', { body: 'Connected to rosbridge!' });
+                connectBtn.textContent = 'Disconnect';
+
+                const rosoutSub = new ROSLIB.Topic({
+                    ros,
+                    name: '/rosout',
+                    messageType: 'rcl_interfaces/msg/Log'
+                });
+
+                rosoutSub.subscribe((msg) => console.log('[rosout]', msg));
+            });
+
+            ros.on('error', (err) => {
+                statusSpan.textContent = 'Connection error';
+                alert('Connection failed: ' + err);
+                ros = null;
+                connectBtn.textContent = 'Connect';
+            });
+
+            ros.on('close', () => {
+                statusSpan.textContent = 'Disconnected';
+                new Notification('ROS2 Connection', { body: 'Connection closed.' });
+                ros = null;
+                connectBtn.textContent = 'Connect';
+            });
+
+            ros.connect('ws://localhost:9090');
+        });
+
+        if (window.Notification && Notification.permission !== 'granted') {
+            Notification.requestPermission();
+        }
+
+        // --- Webcam Setup ---
+        const webcam = document.getElementById('webcam');
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => webcam.srcObject = stream)
+            .catch(error => console.error('Webcam error:', error));
+
+        const webcamContainer = document.getElementById('webcamContainer');
+        const coordBox = document.getElementById('coordBox');
+        webcamContainer.addEventListener('mousemove', (event) => {
+            const rect = webcamContainer.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            coordBox.textContent = `X: ${x.toFixed(0)}, Y: ${y.toFixed(0)}, Z: 0`;
+        });
+
+        // --- 3D Scene Setup ---
+        const modelContainer = document.getElementById('modelContainer');
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, modelContainer.clientWidth / modelContainer.clientHeight, 0.001, 1000);
+        const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('modelCanvas'), antialias: true });
+        renderer.setSize(modelContainer.clientWidth, modelContainer.clientHeight);
+        camera.position.z = 5;
+
+        const ambientLight = new THREE.AmbientLight(0x404040);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        directionalLight.position.set(1, 1, 1);
+        scene.add(directionalLight);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+
+        let model;
+        const points = [];
+        let pointsGroup = new THREE.Group();
+        scene.add(pointsGroup);
+        const lineMaterial = new THREE.LineBasicMaterial({ color: 0x3cff33 });
+        let line;
+        let isSelecting = false;
+
+        // --- Only Load PLY Model ---
+        const loaderPLY = new THREE.PLYLoader();
+        loaderPLY.load('pointCloud.ply', function (geometry) {
+            geometry.computeVertexNormals();
+            model = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+                vertexColors: geometry.attributes.color ? true : false,
+                color: geometry.attributes.color ? undefined : 0xaaaaaa
+            }));
+            scene.add(model);
+            const center = new THREE.Box3().setFromObject(model).getCenter(new THREE.Vector3());
+            model.position.sub(center);
+        });
+
+        // Point selection logic
+        const deleteLastButton = document.getElementById('deleteLastButton');
+        const selectButton = document.getElementById('selectButton');
+
+        selectButton.addEventListener('click', () => {
+            isSelecting = !isSelecting;
+            selectButton.textContent = isSelecting ? 'Stop Selecting' : 'Select Points';
+            deleteLastButton.style.display = isSelecting ? 'inline-block' : 'none';
+        });
+
+        deleteLastButton.addEventListener('click', () => {
+            if (points.length > 0) {
+                points.pop();
+                updatePoints();
+                updateLines();
+            }
+        });
+
+        renderer.domElement.addEventListener('click', (event) => {
+            if (!model || !isSelecting) return;
+            const rect = renderer.domElement.getBoundingClientRect();
+            const mouse = new THREE.Vector2(
+                ((event.clientX - rect.left) / rect.width) * 2 - 1,
+                -((event.clientY - rect.top) / rect.height) * 2 + 1
+            );
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(model, true);
+            if (intersects.length > 0) {
+                points.push(intersects[0].point);
+                updatePoints();
+                updateLines();
+            }
+        });
+
+        function updatePoints() {
+            pointsGroup.clear();
+            const color = document.getElementById('pointColor').value;
+            const size = parseFloat(document.getElementById('pointSize').value);
+            points.forEach(point => {
+                const sphere = new THREE.Mesh(
+                    new THREE.SphereGeometry(size, 8, 8),
+                    new THREE.MeshBasicMaterial({ color })
+                );
+                sphere.position.copy(point);
+                pointsGroup.add(sphere);
+            });
+        }
+
+        function updateLines() {
+            if (line) scene.remove(line);
+            if (points.length < 2) return;
+            line = new THREE.Line(
+                new THREE.BufferGeometry().setFromPoints(points),
+                lineMaterial
+            );
+            scene.add(line);
+        }
+
+        // Zoom
+        document.getElementById('zoomIn').addEventListener('click', () => camera.position.multiplyScalar(0.8));
+        document.getElementById('zoomOut').addEventListener('click', () => camera.position.multiplyScalar(1.2));
+
+        // Update UI inputs
+        document.getElementById('pointSize').addEventListener('input', updatePoints);
+        document.getElementById('pointColor').addEventListener('input', updatePoints);
+        document.getElementById('lineColor').addEventListener('input', (e) => {
+            lineMaterial.color.set(e.target.value);
+            updateLines();
+        });
+
+        // Save to CSV
+        document.getElementById('saveButton').addEventListener('click', () => {
+            const rows = points.map(p => `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)}`).join('\n');
+            const blob = new Blob([`x,y,z\n${rows}`], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'coordinates.csv';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+
+        // Animate
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            const width = modelContainer.clientWidth;
+            const height = modelContainer.clientHeight;
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+        });
+
+        // Button logging
+        document.getElementById('scanButton').addEventListener('click', () => console.log('Scan'));
+        document.getElementById('weldButton').addEventListener('click', () => console.log('Weld'));
+        document.getElementById('stopButton').addEventListener('click', () => console.log('Stop'));
+    </script>
+</body>
+</html>

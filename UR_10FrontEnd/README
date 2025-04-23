@@ -1,0 +1,95 @@
+Electron Download/Set up on Linux (4/4/25)
+
+1. Download Nodejs/npm
+	# Download and install nvm:
+	curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | bash
+	# in lieu of restarting the shell
+	\. "$HOME/.nvm/nvm.sh"
+	# Download and install Node.js:
+	nvm install 22
+	# Verify the Node.js version:
+	node -v # Should print "v22.14.0".
+	nvm current # Should print "v22.14.0".
+	# Verify npm version:
+	npm -v # Should print "10.9.2".
+	
+2. Download Electron 
+	npm install --save-dev electron@latest
+	#Test/verify
+	#npx electron --v
+
+3. Create and go to file
+	file name should be name of project
+	
+4. Enter file
+	npm init -y
+5. Create a main.js or index.js file as well as index.html
+
+6. Update package.json
+	"main": "main.js" -- this could be main or index.js, depends on what you use
+	"scripts": {
+  		"start": "electron ."
+	}
+	
+7. Start
+	. electron
+
+
+8. Desktop shortcut
+	-ensure that the directory exists
+	mkdir -p ~/.local/share/applications/
+	-create file
+	nano ~/.local/share/applications/UR10-Welder.desktop
+
+	-it'll open an editor and need to input this information
+	
+
+Different options: 
+	- exec is the response to which electron then added with the file path to the frontend
+[Desktop Entry]
+Version=1.0
+Name=UR_10 Welder
+Comment=This is the UR10 welder front end desktop application
+Exec=/home/user1/.nvm/versions/node/v22.14.0/bin/electron /home/user1/Documents/UR_10FrontEnd
+Icon=/home/user1/Documents/UR_10FrontEnd/UR_10.png
+Terminal=true
+Type=Application
+Categories=Utility;
+	- exec is the response that runs start.sh file
+	/home/user1/Documents/UR_10FrontEnd/start.sh
+	-creates shell
+	sh -c 'cd /home/user1/Documents/UR_10FrontEnd && npm start'
+	
+	
+Or using path key explicitly
+[Desktop Entry]
+Version=1.0
+Name=UR_10 Welder
+Comment=This is the UR10 welder front end desktop application
+Exec=/home/user1/.nvm/versions/node/v22.14.0/bin/electron .
+Path=/home/user1/Documents/UR_10FrontEnd
+Icon=/home/user1/Documents/UR_10FrontEnd/UR_10.png
+Terminal=false
+Type=Application
+Categories=Utility;
+
+	- Press ctrl o to save, enter, ctrl x to exit 
+	- Verify the file exists
+	ls -la ~/.local/share/applications/UR10-Welder.desktop
+	- Make it exicutable
+	chmod +x ~/.local/share/applications/UR10-Welder.desktop
+	- Add to Desktop
+	cp ~/.local/share/applications/UR10-Welder.desktop ~/Desktop/
+	
+	- Make sure its properly formatted
+	chmod +x ~/.local/share/applications/UR10-Welder.desktop
+	chmod +x ~/Desktop/UR10-Welder.desktop
+	- Try using launcher
+	gtk-launch ur10-welder
+	- Update desktop database
+	update-desktop-database ~/.local/share/applications
+	- Validate desktop file
+	desktop-file-validate ~/.local/share/applications/UR10-Welder.desktop
+	
+
+	
