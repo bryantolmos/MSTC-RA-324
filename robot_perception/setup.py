@@ -18,7 +18,7 @@ setup(
     zip_safe=True,
     entry_points={
         'console_scripts': [
-            'object_processor = robot_perception.object_processor_node:main'
+            'object_snapshot = robot_perception.object_snapshot_node:main'
         ],
     },
 )
