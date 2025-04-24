@@ -1,4 +1,5 @@
 # test_object_snapshot_node.launch.py
+#Will need to fill in strings with specific parameters
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
