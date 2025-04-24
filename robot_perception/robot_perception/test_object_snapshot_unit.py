@@ -1,8 +1,41 @@
 # test/test_object_snapshot_unit.py
 #For unit testing
 #"This focuses on testing the logic inside the node (e.g., storing the snapshot, transforming it)."
-#Need to make changes to script in areas that say "your_package_name"
 
+import unittest
+from object_snapshot_node import ObjectSnapshotNode  # Adjust if this is wrapped in a class
+import rclpy
+
+class TestObjectSnapshotNodeUnit(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        rclpy.init()
+
+    @classmethod
+    def tearDownClass(cls):
+        rclpy.shutdown()
+
+    def setUp(self):
+        self.node = ObjectSnapshotNode()
+
+    def tearDown(self):
+        self.node.destroy_node()
+
+    def test_initial_state(self):
+        self.assertIsNotNone(self.node)
+        self.assertTrue(hasattr(self.node, 'point_cloud_subscriber'))
+        self.assertTrue(hasattr(self.node, 'snapshot_service'))
+
+    def test_callback_processes_pointcloud(self):
+        # You can create a dummy PointCloud2 message here to test the callback
+        # e.g., self.node.point_cloud_callback(dummy_msg)
+        self.assertTrue(callable(self.node.point_cloud_callback))
+
+if __name__ == '__main__':
+    unittest.main()
+
+#Original Script in case it needs to be revisited
+#Need to make changes to below script in areas that say "your_package_name"
 
 # import pytest
 # import numpy as np
@@ -41,35 +74,3 @@
 
 #     assert response.success
 #     assert b'\x00' not in response.snapshot.data  # Simple check that data is present
-
-import unittest
-from object_snapshot_node import ObjectSnapshotNode  # Adjust if this is wrapped in a class
-import rclpy
-
-class TestObjectSnapshotNodeUnit(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        rclpy.init()
-
-    @classmethod
-    def tearDownClass(cls):
-        rclpy.shutdown()
-
-    def setUp(self):
-        self.node = ObjectSnapshotNode()
-
-    def tearDown(self):
-        self.node.destroy_node()
-
-    def test_initial_state(self):
-        self.assertIsNotNone(self.node)
-        self.assertTrue(hasattr(self.node, 'point_cloud_subscriber'))
-        self.assertTrue(hasattr(self.node, 'snapshot_service'))
-
-    def test_callback_processes_pointcloud(self):
-        # You can create a dummy PointCloud2 message here to test the callback
-        # e.g., self.node.point_cloud_callback(dummy_msg)
-        self.assertTrue(callable(self.node.point_cloud_callback))
-
-if __name__ == '__main__':
-    unittest.main()

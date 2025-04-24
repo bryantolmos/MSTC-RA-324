@@ -1,7 +1,34 @@
 # test/test_object_snapshot_launch.py
 #Specifically designed to support integration test; starts SimpleObjectSnapshotNode + any needed dependencies
-#Changes to be made in regards to variable parameters if needed (such as areas with "your_package_name")
 
+
+import rclpy
+import pytest
+from sensor_msgs.msg import PointCloud2
+from geometry_msgs.msg import TransformStamped
+from std_srvs.srv import Trigger
+
+def test_service_call_saves_snapshot(test_node, ros_test_node):
+    client = test_node.create_client(Trigger, '/object_snapshot/save_snapshot')
+    assert client.wait_for_service(timeout_sec=5.0)
+
+    req = Trigger.Request()
+    future = client.call_async(req)
+    rclpy.spin_until_future_complete(test_node, future)
+
+    assert future.result().success
+
+@pytest.fixture(scope='module')
+def test_node():
+    rclpy.init()
+    node = rclpy.create_node('test_object_snapshot_node')
+    yield node
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+#Original Script in case it needs to be revisited
+#Changes to be made in regards to variable parameters if needed (such as areas with "your_package_name")
 
 # from launch import LaunchDescription
 # from launch_ros.actions import Node
@@ -32,27 +59,3 @@
 #             arguments=['0', '0', '0', '0', '0', '0', 'camera_frame', 'world']
 #         )
 #     ])
-
-import rclpy
-import pytest
-from sensor_msgs.msg import PointCloud2
-from geometry_msgs.msg import TransformStamped
-from std_srvs.srv import Trigger
-
-def test_service_call_saves_snapshot(test_node, ros_test_node):
-    client = test_node.create_client(Trigger, '/object_snapshot/save_snapshot')
-    assert client.wait_for_service(timeout_sec=5.0)
-
-    req = Trigger.Request()
-    future = client.call_async(req)
-    rclpy.spin_until_future_complete(test_node, future)
-
-    assert future.result().success
-
-@pytest.fixture(scope='module')
-def test_node():
-    rclpy.init()
-    node = rclpy.create_node('test_object_snapshot_node')
-    yield node
-    node.destroy_node()
-    rclpy.shutdown()
