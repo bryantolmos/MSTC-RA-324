@@ -1,6 +1,6 @@
 # test/test_object_snapshot_launch.py
 #Specifically designed to support integration test; starts SimpleObjectSnapshotNode + any needed dependencies
-#Changes to be made in regards to variable parameters if needed
+#Changes to be made in regards to variable parameters if needed (such as areas with "your_package_name")
 
 
 from launch import LaunchDescription
