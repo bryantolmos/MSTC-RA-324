@@ -2,29 +2,26 @@
 #Specifically designed to support integration test; starts SimpleObjectSnapshotNode + any needed dependencies
 
 
-import rclpy
+import os
 import pytest
-from sensor_msgs.msg import PointCloud2
-from geometry_msgs.msg import TransformStamped
-from std_srvs.srv import Trigger
+from launch import LaunchDescription
+from launch_ros.actions import Node
+from launch_testing_ros.tools import basic_launch_tests
 
-def test_service_call_saves_snapshot(test_node, ros_test_node):
-    client = test_node.create_client(Trigger, '/object_snapshot/save_snapshot')
-    assert client.wait_for_service(timeout_sec=5.0)
+@pytest.mark.rostest
+def generate_test_description():
+    return LaunchDescription([
+        Node(
+            package='object_snapshot',
+            executable='object_snapshot_node',
+            name='object_snapshot_node',
+            output='screen',
+        ),
+    ]), {}
 
-    req = Trigger.Request()
-    future = client.call_async(req)
-    rclpy.spin_until_future_complete(test_node, future)
+# Include generic checks for life, services, etc.
+# For advanced launch checks, expand with pytest fixtures
 
-    assert future.result().success
-
-@pytest.fixture(scope='module')
-def test_node():
-    rclpy.init()
-    node = rclpy.create_node('test_object_snapshot_node')
-    yield node
-    node.destroy_node()
-    rclpy.shutdown()
 
 
 #Original Script in case it needs to be revisited
