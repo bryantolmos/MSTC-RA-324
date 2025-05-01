@@ -1,6 +1,7 @@
 #Initial Stress Test script draft
 #Simulates rapidly publishing a large number of points
 #Tests for buffer, transform, and memory handling
+#Will be rewritten in C++ once waypoint_manager_node.py is translated to C++
 
 import rclpy
 from rclpy.node import Node

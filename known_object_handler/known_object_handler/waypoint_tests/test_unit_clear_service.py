@@ -1,4 +1,5 @@
 #To test a complete function in isolation. For this file, it will be for clear_waypoints_callback
+#Will be rewritten in C++ once waypoint_manager_node.py is translated to C++
 
 
 import rclpy

@@ -1,4 +1,5 @@
 #To verify internal methods such as publishing waypoints and storing them
+#Will be rewritten in C++ once waypoint_manager_node.py is translated to C++
 
 import pytest
 from unittest.mock import MagicMock
