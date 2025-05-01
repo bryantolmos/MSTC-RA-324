@@ -1,6 +1,6 @@
 #Initial draft of Application Test
 #Should be an end-to-end test to simulate the full workflow of waypoint_manager_node.py using ROS 2 test tools
-#Will be rewritten in C++ once waypoint_manager_node.py is translated to C++
+#Will be converted to C++ once waypoint_manager_node.py is translated to C++
 
 import rclpy
 from rclpy.node import Node
