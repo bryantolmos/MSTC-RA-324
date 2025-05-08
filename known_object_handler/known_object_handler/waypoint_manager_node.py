@@ -6,17 +6,74 @@ from rclpy.executors import ExternalShutdownException
 
 from geometry_msgs.msg import Point, Pose, PoseStamped, PoseArray, Quaternion, TransformStamped
 from std_srvs.srv import Trigger
+from std_srvs.srv import Empty  # Import the Empty service type
 
 # tf2 imports for handling transformations
 import tf2_ros
 from tf2_ros import TransformException, Buffer, TransformListener
 import tf2_geometry_msgs # import tf2 helper for geometry message transformations
+import math
+
+
+def quaternion_from_vectors(v0, v1):
+    """
+    Returns a quaternion [x,y,z,w] that rotates vector v0 to v1.
+    v0 and v1 should be 3-element iterables.
+    """
+    # normalize inputs
+    def norm(u):
+        return math.sqrt(sum(x*x for x in u))
+    v0n = [x / norm(v0) for x in v0]
+    v1n = [x / norm(v1) for x in v1]
+
+    # axis = cross(v0, v1)
+    axis = [
+        v0n[1]*v1n[2] - v0n[2]*v1n[1],
+        v0n[2]*v1n[0] - v0n[0]*v1n[2],
+        v0n[0]*v1n[1] - v0n[1]*v1n[0],
+    ]
+    axis_len = norm(axis)
+
+    # handle nearly parallel or anti-parallel vectors
+    if axis_len < 1e-6:
+        # if they’re anti-parallel, rotate 180° around any perpendicular axis
+        dot = sum(a*b for a,b in zip(v0n, v1n))
+        if dot < 0:
+            # pick an arbitrary orthogonal axis:
+            axis = [1.0, 0.0, 0.0] if abs(v0n[0]) < 0.9 else [0.0, 1.0, 0.0]
+            # re-cross to ensure perpendicular
+            axis = [
+                v0n[1]*axis[2] - v0n[2]*axis[1],
+                v0n[2]*axis[0] - v0n[0]*axis[2],
+                v0n[0]*axis[1] - v0n[1]*axis[0]
+            ]
+            axis_len = norm(axis)
+        else:
+            # vectors are the same—no rotation needed
+            return [0.0, 0.0, 0.0, 1.0]
+
+    axis = [x / axis_len for x in axis]
+    # angle between v0 and v1
+    dot = sum(a*b for a,b in zip(v0n, v1n))
+    # numerical safety
+    dot = max(min(dot, 1.0), -1.0)
+    angle = math.acos(dot)
+
+    sin_half = math.sin(angle / 2.0)
+    cos_half = math.cos(angle / 2.0)
+    return [
+        axis[0] * sin_half,
+        axis[1] * sin_half,
+        axis[2] * sin_half,
+        cos_half
+    ]
+
 
 class WaypointManagerNode(Node):
     """
     Listens for local points clicked relative to a known object frame,
     transforms them into Pose waypoints in the robot base frame,
-    and makes the list available for planning.
+    and makes the orientation of the waypoints face the object.
     """
     def __init__(self):
         super().__init__('waypoint_manager_node')
@@ -77,8 +134,7 @@ class WaypointManagerNode(Node):
         self.get_logger().info(f"Received local point: [{msg.x:.3f}, {msg.y:.3f}, {msg.z:.3f}]")
 
         try:
-            # step 1: look up the necessary transform
-            # get the transform from the object frame to the robot base frame
+            # step 1: look up the necessary transforms
             transform_timeout = Duration(seconds=1.0)
             transform_object_to_base = self.tf_buffer_.lookup_transform(
                  self.robot_base_frame_, # target frame
@@ -87,12 +143,12 @@ class WaypointManagerNode(Node):
                  timeout=transform_timeout
             )
 
-            # step 2: create a posestamped message for the input point
+            # step 2: create a posestamped message for the input point (in object frame)
             pose_in_object_frame = PoseStamped()
             pose_in_object_frame.header.stamp = self.get_clock().now().to_msg() # stamp with current time
             pose_in_object_frame.header.frame_id = self.object_frame_
             pose_in_object_frame.pose.position = msg # use the received point for the position
-            # set a default orientation (aligned with object frame)
+            # set a default orientation
             pose_in_object_frame.pose.orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
 
             # step 3: transform the pose to the robot base frame
@@ -101,12 +157,48 @@ class WaypointManagerNode(Node):
                 transform_object_to_base # the transform to apply
             )
 
-            # step 4: orientation handling (currently uses transformed orientation)
-            # the transform includes the object's orientation relative to the base.
-            # current orientation is correct relative to the object frame's orientation.
-            # future enhancement: calculate orientation to point towards object if needed (e.g., using atan2).
+            # step 4: calculate orientation to face the object
+            # Get the waypoint's position in the base frame
+            waypoint_position_base = waypoint_pose_stamped_in_base.pose.position
 
-            self.get_logger().info(f"Transformed waypoint in {self.robot_base_frame_}: "
+            # Get the object's position in the base frame
+            try:
+                object_transform = self.tf_buffer_.lookup_transform(
+                    self.robot_base_frame_,
+                    self.object_frame_,
+                    rclpy.time.Time(),
+                    timeout=transform_timeout
+                )
+                object_position_base = object_transform.transform.translation
+            except TransformException as ex:
+                self.get_logger().warn(f"Could not get object transform: {ex}")
+                return
+
+            # Calculate the vector from the waypoint to the object
+            vector_to_object = [
+                object_position_base.x - waypoint_position_base.x,
+                object_position_base.y - waypoint_position_base.y,
+                object_position_base.z - waypoint_position_base.z
+            ]
+
+            # Normalize the vector
+            norm = math.sqrt(sum(x*x for x in vector_to_object))
+            if norm > 1e-6:  # Avoid division by zero
+                vector_to_object_normalized = [x / norm for x in vector_to_object]
+            else:
+                vector_to_object_normalized = [0.0, 0.0, 1.0] # Default direction
+
+            # Define a default "up" direction (e.g., world's Z-axis in base frame)
+            up_direction = [0.0, 0.0, 1.0]
+
+            # Calculate the rotation to align the end-effector's Z-axis with the vector to the object
+            rotation = quaternion_from_vectors([0.0, 0.0, 1.0], vector_to_object_normalized)            
+            waypoint_pose_stamped_in_base.pose.orientation.x = rotation[0]
+            waypoint_pose_stamped_in_base.pose.orientation.y = rotation[1]
+            waypoint_pose_stamped_in_base.pose.orientation.z = rotation[2]
+            waypoint_pose_stamped_in_base.pose.orientation.w = rotation[3]
+
+            self.get_logger().info(f"Transformed waypoint in {self.robot_base_frame_} (facing object): "
                                    f"P[{waypoint_pose_stamped_in_base.pose.position.x:.3f}, "
                                    f"{waypoint_pose_stamped_in_base.pose.position.y:.3f}, "
                                    f"{waypoint_pose_stamped_in_base.pose.position.z:.3f}] "
@@ -114,7 +206,6 @@ class WaypointManagerNode(Node):
                                    f"{waypoint_pose_stamped_in_base.pose.orientation.y:.3f}, "
                                    f"{waypoint_pose_stamped_in_base.pose.orientation.z:.3f}, "
                                    f"{waypoint_pose_stamped_in_base.pose.orientation.w:.3f}]")
-
 
             # step 5: store the resulting pose (not posestamped) in the list
             self.waypoints_.append(waypoint_pose_stamped_in_base.pose)

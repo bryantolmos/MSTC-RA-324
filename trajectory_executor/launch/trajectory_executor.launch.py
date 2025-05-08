@@ -20,6 +20,10 @@ def generate_launch_description():
             'floor_check_z', default_value='-0.05',
             description='safety z threshold below which waypoints are rejected'
         ),
+        DeclareLaunchArgument(
+            'waypoint_offset_z', default_value='0.05',
+            description='offset to apply to the Z coordinate of received waypoints (in base frame)'
+        ),
         # optional: uncomment below to expose more parameters as launch arguments
         # DeclareLaunchArgument('waypoint_topic', default_value='/planned_waypoints', description='topic for receiving PoseArray waypoints'),
         # DeclareLaunchArgument('execute_service_name', default_value='/execute_web_trajectory', description='service name to trigger trajectory execution'),
@@ -34,6 +38,7 @@ def generate_launch_description():
         'planning_group': LaunchConfiguration('planning_group'),
         'robot_base_frame': LaunchConfiguration('robot_base_frame'),
         'floor_check_z': LaunchConfiguration('floor_check_z'),
+        'waypoint_offset_z': LaunchConfiguration('waypoint_offset_z'),
         # if uncommenting arguments above, add corresponding launch configurations here:
         # 'waypoint_topic': LaunchConfiguration('waypoint_topic'),
         # 'execute_service_name': LaunchConfiguration('execute_service_name'),

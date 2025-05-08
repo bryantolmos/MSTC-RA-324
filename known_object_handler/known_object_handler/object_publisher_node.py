@@ -90,6 +90,8 @@ class ObjectPublisherNode(Node):
         self.marker_pub_ = self.create_publisher(Marker, '/known_object_marker', latching_qos)
         # collision object publisher is used for both target and floor
         self.collision_pub_ = self.create_publisher(CollisionObject, '/collision_object', latching_qos)
+        # separate publisher for the floor marker for debugging
+        self.floor_marker_pub_ = self.create_publisher(Marker, '/floor_marker', latching_qos)
 
         # setup timer for periodic publishing or publish once
         if publish_rate > 0:
@@ -164,7 +166,22 @@ class ObjectPublisherNode(Node):
         self.collision_pub_.publish(co)
 
     def publish_floor_object(self, stamp):
-        """Publishes CollisionObject for the floor."""
+        """Publishes Marker and CollisionObject for the floor."""
+        # Publish Marker for the floor (for visualization)
+        floor_marker = Marker()
+        floor_marker.header.frame_id = self.parent_frame_
+        floor_marker.header.stamp = stamp
+        floor_marker.ns = "floor"
+        floor_marker.id = 0
+        floor_marker.type = Marker.CUBE
+        floor_marker.action = Marker.ADD
+        floor_marker.pose = self.floor_pose_
+        floor_marker.scale = Vector3(x=self.floor_dims_[0], y=self.floor_dims_[1], z=self.floor_dims_[2])
+        floor_marker.color = ColorRGBA(r=0.8, g=0.8, b=0.8, a=0.8)
+        floor_marker.lifetime = Duration(seconds=0).to_msg()
+        self.floor_marker_pub_.publish(floor_marker)
+
+        # Publish CollisionObject for the floor (for MoveIt)
         co = CollisionObject()
         # floor pose is defined relative to the parent frame
         co.header.frame_id = self.parent_frame_
@@ -184,8 +201,6 @@ class ObjectPublisherNode(Node):
         # apply the configured pose to the floor primitive
         co.primitive_poses.append(self.floor_pose_)
         self.collision_pub_.publish(co)
-        # optionally, publish a marker for the floor for visualization
-        # marker = Marker(...)
 
 
 def main(args=None):
