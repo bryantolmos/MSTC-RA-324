@@ -1,0 +1,221 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+}
+/* Flex container to split the screen */
+#container {
+    display: flex;
+    height: 100%;
+    width: 100%;
+}
+/* Each half takes equal space */
+#webcamContainer, #modelContainer {
+    flex: 1;
+    position: relative;
+}
+/* Webcam video styling to fill its container */
+#webcam {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    /*border: 2px solid #fff;
+    border-radius: 5px;*/
+}
+/* Control panel at bottom of webcam container */
+#webcamControls {
+    position: absolute;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.5);
+    padding: 5px 10px;
+    border-radius: 5px;
+    z-index: 10;
+}
+#webcamControls button {
+    margin: 0 5px;
+    padding: 8px 16px;
+    color: #fff;
+    background: #333;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background-color 0.2s, transform 0.1s;
+}
+#webcamControls button:hover {
+    background-color: #555;
+    transform: scale(1.05);
+}
+/* Coordinate box centered at the top of webcam container */
+#coordBox {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(255, 255, 255, 0.7);
+    padding: 5px 10px;
+    border-radius: 5px;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    color: #000;
+    z-index: 10;
+}
+/* 3D canvas fills the model container */
+#modelCanvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+/* Buttons and controls for 3D model viewer */
+#selectButton, #saveButton, #deleteLastButton {
+    position: absolute;
+    padding: 8px 16px;
+    z-index: 10;
+    background: #333;
+    color: #fff;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background-color 0.2s, transform 0.1s;
+}
+#selectButton:hover, #saveButton:hover, #deleteLastButton:hover {
+    background-color: #555;
+    transform: scale(1.05);
+}
+#selectButton {
+    top: 10px;
+    left: 10px;
+}
+#saveButton {
+    top: 50px;
+    left: 10px;
+
+}
+#deleteLastButton {
+    top: 90px;
+    left: 10px;
+}
+#controls {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: #333;
+    padding: 10px;
+    z-index: 10;
+    color: white;
+    border-radius: 5px;
+}
+
+#orbitalControls {
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
+    background: rgba(0, 0, 0, 0.5);
+    padding: 5px;
+    border-radius: 5px;
+    z-index: 10;
+    display: flex; /* To help with centering content in the buttons */
+}
+
+#orbitalControls button {
+    width: 30px; /*size of your circles */
+    height: 30px; 
+    margin: 0 5px;
+    color: #fff;
+    background: #333;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: background-color 0.2s, transform 0.1s;
+    display: flex; /* Center the +/- symbols */
+    justify-content: center;
+    align-items: center;
+    font-size: 16px; 
+    line-height: 1;
+}
+
+#orbitalControls button:hover {
+    background-color: #555;
+    transform: scale(1.05);
+}
+
+/*style the range‐slider & color‐inputs like your other buttons*/
+#controls input[type="range"],
+#controls input[type="color"] {
+  margin: 5px 0;
+  padding: 8px 16px;
+  background: #333;
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.1s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* hover states just like your buttons */
+#controls input[type="range"]:hover,
+#controls input[type="color"]:hover {
+  background-color: #555;
+  transform: scale(1.05);
+}
+
+/*make the color pickers circular*/
+#controls input[type="color"] {
+  width: 32px;
+  height: 32px;
+  padding: 0;           
+  border-radius: 50%;
+}
+
+/* chrome/blink/webkit: target the swatch itself */
+#controls input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+#controls input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 50%;
+}
+
+/*style the range thumb so it’s easier to grab*/
+#controls input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border: 2px solid #333;
+  border-radius: 50%;
+  cursor: pointer;
+  margin-top: -6px; /* centers the thumb on the track */
+}
+#controls input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  background: #777;
+  border-radius: 2px;
+}
+
+/*Force labels and color‑inputs to line up inline and center vertically*/
+#controls label, #controls input[type="color"] {
+    display: inline-block;
+    vertical-align: middle;
+}
+  
+/* Small gap between the text and the circle */
+#controls input[type="color"] {
+    margin-left: 8px;
+}
+  
+/* Restore your circle sizing if needed */
+#controls input[type="color"] {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+  border-radius: 50%;
+}

@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://wiki.ros.org/xacro">
+  <xacro:macro name="gas_manifold" params="parent_link">
+    <link name="gas_manifold_link">
+      <visual>
+        <origin xyz="-0.01 0.015 0" rpy="0.785 0 0"/> <!-- Positioned above the wrist -->
+        <geometry>
+          <mesh filename="package://ur10_custom_description/meshes/manifold_gas_nozzle.stl" scale="0.005 0.005 0.005"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="-0.01 0.015 0" rpy="0.785 0 0"/>
+        <geometry>
+          <mesh filename="package://ur10_custom_description/meshes/manifold_gas_nozzle.stl" scale="0.005 0.005 0.005"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="0.15"/>
+        <origin xyz="-0.01 0.015 0" rpy="0.785 0 0"/>
+        <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+      </inertial>
+    </link>
+  
+    <joint name="gas_manifold_joint" type="fixed">
+      <parent link="${parent_link}"/>
+      <child link="gas_manifold_link"/>
+      <origin xyz="-0.01 0.015 0" rpy="0.785 0 0"/>
+    </joint>
+  </xacro:macro>
+</robot>
